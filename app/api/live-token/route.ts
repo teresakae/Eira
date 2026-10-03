@@ -1,8 +1,8 @@
 // POST { mode: 'report' | 'companion', lang: 'en' | 'id' }
 // → { token, model, apiVersion } for the browser to open a Gemini Live voice session.
 // The prompt, voice and captions are locked into the token; the browser can't change them.
-import { GoogleGenAI, Modality } from '@google/genai';
-import { systemPrompt, type Lang, type Mode } from '@/lib/prompts';
+import { GoogleGenAI, Modality, StartSensitivity } from '@google/genai';
+import { DRAFT_TOOL, systemPrompt, type Lang, type Mode } from '@/lib/prompts';
 
 const MODEL = process.env.GEMINI_LIVE_MODEL || 'gemini-3.8-live';
 const VOICE = process.env.GEMINI_VOICE || 'Aoede';
@@ -30,14 +30,17 @@ export async function POST(req: Request) {
           config: {
             responseModalities: [Modality.AUDIO],
             systemInstruction: systemPrompt(mode, lang),
+            tools: mode === 'report' ? [{ functionDeclarations: [DRAFT_TOOL] }] : undefined,
             speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE } } },
-            inputAudioTranscription: {},  // live captions of the user
+            // Live captions of the user. Without language hints, noise gets captioned as Spanish, Korean, etc.
+            inputAudioTranscription: { languageCodes: lang === 'id' ? ['id-ID', 'en-US'] : ['en-US', 'id-ID'] },
+            // Low = background noise and echo are less likely to cut the AI off mid-sentence.
+            realtimeInputConfig: { automaticActivityDetection: { startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_LOW } },
             outputAudioTranscription: {}, // live captions of the AI
             sessionResumption: {},        // reconnect past the 15-min session cap
             contextWindowCompression: { slidingWindow: {} },
           },
-        },
-        lockAdditionalFields: [], // lock exactly the fields above
+        }, // setting liveConnectConstraints locks all of the above
       },
     });
     // ponytail: no rate limit; anyone with the URL can mint tokens. Add one before real users.

@@ -4,6 +4,7 @@
 // play AI audio (24 kHz PCM) down, show both transcriptions as captions.
 import { useRef, useState } from 'react';
 import { GoogleGenAI, type LiveServerMessage, type Session } from '@google/genai';
+import { LABELS, type Report } from '@/lib/sapa';
 
 type Line = { who: 'you' | 'ai'; text: string };
 
@@ -39,19 +40,42 @@ export default function Dev() {
   const [lang, setLang] = useState<'en' | 'id'>('id');
   const [status, setStatus] = useState('idle');
   const [lines, setLines] = useState<Line[]>([]);
+  const [draft, setDraft] = useState<{ report: Report; missing: string[] } | null>(null);
+  const transcript = useRef<Line[]>([]); // same as `lines`, but readable inside Gemini callbacks
   const stopRef = useRef<() => void>(() => {});
 
   function caption(who: Line['who'], text?: string) {
     if (!text) return;
-    setLines(prev => {
-      const last = prev.at(-1);
-      if (last?.who === who) return [...prev.slice(0, -1), { who, text: last.text + text }];
-      return [...prev, { who, text }];
-    });
+    const t = transcript.current;
+    const last = t.at(-1);
+    if (last?.who === who) t[t.length - 1] = { who, text: last.text + text };
+    else t.push({ who, text });
+    setLines([...t]);
+  }
+
+  // The AI called draft_ready: turn the transcript into a report, tell the AI what's still missing.
+  async function makeDraft(session: Session, id?: string) {
+    let response;
+    try {
+      const res = await fetch('/api/draft', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcript: transcript.current }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setDraft(data);
+      response = data.missing.length ? { missing: data.missing.map((k: string) => LABELS[k]) } : { ok: true };
+    } catch (err) {
+      response = { error: 'Could not prepare the draft. Apologise and offer to try again.', detail: (err as Error).message };
+    }
+    session.sendToolResponse({ functionResponses: [{ id, name: 'draft_ready', response }] });
   }
 
   async function start() {
+    transcript.current = [];
     setLines([]);
+    setDraft(null);
     setStatus('getting token…');
     // Audio contexts must be created inside the tap, or iPhones stay silent.
     const micCtx = new AudioContext({ sampleRate: 16000 });
@@ -85,6 +109,9 @@ export default function Dev() {
         model, // everything else is locked into the token
         callbacks: {
           onmessage: (msg: LiveServerMessage) => {
+            for (const call of msg.toolCall?.functionCalls ?? []) {
+              if (call.name === 'draft_ready' && session) makeDraft(session, call.id);
+            }
             const c = msg.serverContent;
             if (!c) return;
             caption('you', c.inputTranscription?.text);
@@ -154,6 +181,12 @@ export default function Dev() {
           <small>{l.who === 'you' ? 'You' : 'AI'}</small><br />{l.text}
         </p>
       ))}
+      {draft && (
+        <section>
+          <h2>Draft {draft.missing.length ? `(missing: ${draft.missing.join(', ')})` : '(complete)'}</h2>
+          <pre style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(draft.report, null, 2)}</pre>
+        </section>
+      )}
     </main>
   );
 }
