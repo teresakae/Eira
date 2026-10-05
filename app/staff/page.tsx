@@ -1,6 +1,7 @@
 // Fake SAPA 129 staff dashboard: /staff (password: STAFF_PASSWORD in .env.local).
 // Lists incoming reports and lets staff change their status. Plain on purpose: it's a demo stand-in.
 import { headers } from 'next/headers';
+import { connection } from 'next/server';
 import { refresh } from 'next/cache';
 import { sql, STATUSES } from '@/lib/db';
 import { isStaff } from '@/lib/staff';
@@ -35,6 +36,7 @@ const show = (v: unknown) =>
 const when = (d: string) => new Date(d).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta', dateStyle: 'medium', timeStyle: 'short' });
 
 export default async function Staff() {
+  await connection(); // read the DB on every visit, not once at build time
   const rows = await sql`SELECT code, status, report, created_at FROM reports ORDER BY created_at DESC LIMIT 200`;
   return (
     <main style={{ maxWidth: 820, margin: '0 auto', padding: 16, fontFamily: 'system-ui', lineHeight: 1.5 }}>

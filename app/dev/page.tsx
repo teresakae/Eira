@@ -170,6 +170,7 @@ export default function Dev() {
   }
 
   async function submit() {
+    setSent('sending…'); // disables the button, so a double tap can't save the report twice
     const res = await fetch('/api/reports', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -220,7 +221,7 @@ export default function Dev() {
         <section>
           <h2>Draft {draft.missing.length ? `(missing: ${draft.missing.join(', ')})` : '(complete)'}</h2>
           <pre style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(draft.report, null, 2)}</pre>
-          <button onClick={submit} disabled={draft.missing.length > 0 || sent.startsWith('LPR-')}>Submit report</button>{' '}
+          <button onClick={submit} disabled={draft.missing.length > 0 || sent.startsWith('LPR-') || sent === 'sending…'}>Submit report</button>{' '}
           {sent && <b>{sent.startsWith('LPR-') ? `Sent. Your report code: ${sent}` : sent}</b>}
         </section>
       )}
