@@ -7,6 +7,13 @@ import { GoogleGenAI, type LiveServerMessage, type Session } from '@google/genai
 import { LABELS, type Report } from '@/lib/sapa';
 
 type Line = { who: 'you' | 'ai'; text: string };
+type HistoryRow = { code: string; status: string; category: string[]; created_at: string };
+
+// History = report codes saved in this browser only. No account needed.
+const CODES_KEY = 'lapor:codes';
+function savedCodes(): string[] {
+  try { return JSON.parse(localStorage.getItem(CODES_KEY) ?? '[]'); } catch { return []; }
+}
 
 // Collects mic samples off the audio thread, posts ~100 ms (1600 samples) at a time.
 // Inlined so it needs no extra file.
@@ -41,6 +48,8 @@ export default function Dev() {
   const [status, setStatus] = useState('idle');
   const [lines, setLines] = useState<Line[]>([]);
   const [draft, setDraft] = useState<{ report: Report; missing: string[] } | null>(null);
+  const [sent, setSent] = useState(''); // report code once submitted, or an error
+  const [history, setHistory] = useState<HistoryRow[] | null>(null);
   const transcript = useRef<Line[]>([]); // same as `lines`, but readable inside Gemini callbacks
   const stopRef = useRef<() => void>(() => {});
 
@@ -76,6 +85,7 @@ export default function Dev() {
     transcript.current = [];
     setLines([]);
     setDraft(null);
+    setSent('');
     setStatus('getting token…');
     // Audio contexts must be created inside the tap, or iPhones stay silent.
     const micCtx = new AudioContext({ sampleRate: 16000 });
@@ -159,6 +169,31 @@ export default function Dev() {
     }
   }
 
+  async function submit() {
+    const res = await fetch('/api/reports', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ report: draft!.report }),
+    });
+    const data = await res.json();
+    if (!res.ok) return setSent(`Error: ${data.error}${data.fields ? ' (' + data.fields.join(', ') + ')' : ''}`);
+    try { localStorage.setItem(CODES_KEY, JSON.stringify([data.code, ...savedCodes()])); } catch { /* storage blocked: code still shown */ }
+    setSent(data.code);
+  }
+
+  async function loadHistory() {
+    const codes = savedCodes().slice(0, 50);
+    if (!codes.length) return setHistory([]);
+    const res = await fetch('/api/reports?codes=' + codes.join(','));
+    setHistory(res.ok ? await res.json() : []);
+  }
+
+  // For users who share a phone with the person hurting them. Reports stay with SAPA; only this device forgets.
+  function hideHistory() {
+    try { localStorage.removeItem(CODES_KEY); } catch { /* nothing stored */ }
+    setHistory([]);
+  }
+
   const live = status !== 'idle' && !status.startsWith('error') && !status.startsWith('closed');
 
   return (
@@ -185,8 +220,19 @@ export default function Dev() {
         <section>
           <h2>Draft {draft.missing.length ? `(missing: ${draft.missing.join(', ')})` : '(complete)'}</h2>
           <pre style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(draft.report, null, 2)}</pre>
+          <button onClick={submit} disabled={draft.missing.length > 0 || sent.startsWith('LPR-')}>Submit report</button>{' '}
+          {sent && <b>{sent.startsWith('LPR-') ? `Sent. Your report code: ${sent}` : sent}</b>}
         </section>
       )}
+      <section>
+        <h2>History</h2>
+        <button onClick={loadHistory}>Load my reports</button>{' '}
+        <button onClick={hideHistory}>Hide my history on this device</button>
+        {history?.length === 0 && <p>No reports saved on this device.</p>}
+        {history?.map(h => (
+          <p key={h.code}><b>{h.code}</b> · {h.status} · {h.category.join(', ')} · sent {new Date(h.created_at).toLocaleString()}</p>
+        ))}
+      </section>
     </main>
   );
 }
