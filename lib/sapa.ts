@@ -75,6 +75,31 @@ export const LABELS: Record<string, string> = {
   reporter_fullname: "the reporter's name, or whether they'd like to stay anonymous",
 };
 
+type Rule = { type: string | string[]; enum?: unknown[]; items?: { enum: string[] }; minimum?: number; maximum?: number };
+
+function fits(v: unknown, rule: Rule) {
+  if (rule.type === 'array') return Array.isArray(v) && v.every(x => rule.items!.enum.includes(x));
+  if (v === null) return true;
+  if (rule.enum) return rule.enum.includes(v);
+  if (rule.type.includes('integer')) return Number.isInteger(v) && (v as number) >= rule.minimum! && (v as number) <= rule.maximum!;
+  if (rule.type.includes('boolean')) return typeof v === 'boolean';
+  return typeof v === 'string' && v.length <= 5000;
+}
+
+// Checks a report sent by the browser (the user may have edited it) against REPORT_SCHEMA.
+// Returns only known fields, or the names of fields with values SAPA wouldn't accept.
+export function check(input: unknown): { report: Report } | { bad: string[] } {
+  if (typeof input !== 'object' || input === null || Array.isArray(input)) return { bad: ['report'] };
+  const report: Report = {};
+  const bad: string[] = [];
+  for (const [key, rule] of Object.entries(REPORT_SCHEMA.properties as Record<string, Rule>)) {
+    const v = (input as Report)[key] ?? (rule.type === 'array' ? [] : null);
+    if (fits(v, rule)) report[key] = v;
+    else bad.push(key);
+  }
+  return bad.length ? { bad } : { report };
+}
+
 // Required fields still empty. Empty list = ready to submit.
 // Same as SAPA's form, except the phone number: users may submit without one.
 export function missing(r: Report): string[] {
